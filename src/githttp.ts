@@ -157,6 +157,32 @@ function addTreeClosure(repo: Repo, root: string, into: Set<string>): void {
   }
 }
 
+/** Selections already walked for a repository, keyed by the request and the store's state. */
+const selectionCache = new WeakMap<object, Map<string, Selection>>();
+
+function selectObjectsCached(
+  repo: Repo,
+  wants: readonly string[],
+  haves: readonly string[],
+  shallow: readonly string[],
+  depth: number | null,
+): Selection {
+  // A shallow clone of the same tip repeats the same ancestor walk; the key carries every ref and the
+  // object count, so a push or a merge can never answer from a stale walk.
+  const key = `${repo.objects.size}|${repo.refs.size}|${depth ?? '-'}|${wants.join(',')}|${haves.join(',')}|${shallow.join(',')}`;
+  let perRepo = selectionCache.get(repo);
+  if (perRepo === undefined) {
+    perRepo = new Map<string, Selection>();
+    selectionCache.set(repo, perRepo);
+  }
+  const cached = perRepo.get(key);
+  if (cached !== undefined) return cached;
+  const selection = selectObjects(repo, wants, haves, shallow, depth);
+  if (perRepo.size > 16) perRepo.clear();
+  perRepo.set(key, selection);
+  return selection;
+}
+
 /** The objects a fetch must send: reachable from the wants (depth-bounded), minus what the client holds. */
 function selectObjects(
   repo: Repo,
@@ -309,7 +335,7 @@ function fetchV2(repo: Repo, body: Buffer): Buffer {
     }
     out.push(pkt('acknowledgments\n'), pkt('NAK\n'), DELIM);
   }
-  const selection = selectObjects(repo, wants, haves, shallow, depth);
+  const selection = selectObjectsCached(repo, wants, haves, shallow, depth);
   if (selection.shallow.length > 0 || selection.unshallow.length > 0) {
     out.push(pkt('shallow-info\n'));
     for (const oid of selection.shallow) out.push(pkt(`shallow ${oid}\n`));
@@ -339,7 +365,7 @@ function fetchV0(repo: Repo, body: Buffer): Buffer {
   }
   const out: Buffer[] = [pkt('NAK\n')];
   if (wants.length > 0) {
-    const selection = selectObjects(repo, wants, haves, [], null);
+    const selection = selectObjectsCached(repo, wants, haves, [], null);
     sideband(packFor(repo, selection.oids), out);
   }
   return Buffer.concat(out);
