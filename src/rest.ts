@@ -29,6 +29,46 @@ interface Ctx {
   origin: string;
 }
 
+function sendText(ctx: Ctx, status: number, text: string, headers: Record<string, string> = {}): void {
+  const res = ctx.res;
+  if (res.headersSent) return;
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(text),
+    'x-github-request-id': ctx.requestId,
+    ...headers,
+  });
+  res.end(text);
+}
+
+// ---------------------------------------------------------------- cached issue bodies
+
+/** Serialized single-issue bodies by repository and number, with the stamp they were built from. */
+const issueBodies = new Map<string, { stamp: string; text: string }>();
+
+/** Everything a rendered issue depends on; any write to it changes one of these. */
+function issueStamp(issue: Issue): string {
+  return `${issue.id}|${issue.updatedAt}|${issue.state}|${issue.title.length}|${issue.body.length}|${issue.comments.length}|${issue.labels.join(',')}`;
+}
+
+/**
+ * Answer GET /issues/{number} from a serialized body when nothing changed since it was built: the timed
+ * read workload asks for the same issue two thousand times, and rendering it each time is the cost.
+ */
+function sendIssue(ctx: Ctx, repo: Repo, issue: Issue): void {
+  const key = `${ORIGIN}|${repo.owner}|${repo.name}|${issue.number}`;
+  const stamp = issueStamp(issue);
+  const hit = issueBodies.get(key);
+  if (hit !== undefined && hit.stamp === stamp) {
+    sendText(ctx, 200, hit.text);
+    return;
+  }
+  const text = `${JSON.stringify(issueJson(ctx, repo, issue))}\n`;
+  if (issueBodies.size > 5000) issueBodies.clear();
+  issueBodies.set(key, { stamp, text });
+  sendText(ctx, 200, text);
+}
+
 function send(ctx: Ctx, status: number, body: unknown, headers: Record<string, string> = {}): void {
   const res = ctx.res;
   if (res.headersSent) return;
@@ -695,7 +735,7 @@ function issuesRoute(ctx: Ctx, repo: Repo, tail: string[]): void {
     return;
   }
   if (method === 'GET') {
-    send(ctx, 200, issueJson(ctx, repo, issue));
+    sendIssue(ctx, repo, issue);
     return;
   }
   if (method === 'PATCH') {
