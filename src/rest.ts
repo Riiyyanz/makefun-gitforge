@@ -1,7 +1,7 @@
 // The GitHub REST v3 surface: repositories, branches, commits, contents, labels, issues,
 // comments and pull requests, with GitHub's shapes and statuses.
 
-import type { ServerResponse } from 'node:http';
+import type { FastResponse } from './http1.ts';
 import {
   ZERO_OID, createPullRequest, diffTreePaths, mergePullRequest, pullFiles,
   type Comment, type Forge, type Issue, type Label, type Pull, type Repo,
@@ -24,7 +24,7 @@ interface Ctx {
   query: URLSearchParams;
   body: unknown;
   json: boolean;
-  res: ServerResponse;
+  res: FastResponse;
   requestId: string;
   origin: string;
 }

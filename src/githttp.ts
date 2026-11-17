@@ -1,7 +1,7 @@
 // git smart HTTP: info/refs advertisements (upload-pack v0 and v2, receive-pack v0),
 // v2 ls-refs and fetch, v0 fetch, and receive-pack with per-ref report-status.
 
-import type { ServerResponse } from 'node:http';
+import type { FastResponse } from './http1.ts';
 import { DELIM, FLUSH, pkt, readPkt } from './pkt.ts';
 import { ZERO_OID, isOid, parseCommit, parseTag, parseTree, peel, readPack, writePack, writePackOf, type GObj } from './objects.ts';
 import type { Forge, Repo } from './store.ts';
@@ -73,13 +73,13 @@ function advertisementV2(repo: Repo): Buffer {
 }
 
 /** A JSON error body for the git paths that must answer a status (a missing repository). */
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
+function sendJson(res: FastResponse, status: number, body: unknown): void {
   const text = `${JSON.stringify(body)}\n`;
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(text) });
   res.end(text);
 }
 
-function sendGit(res: ServerResponse, status: number, contentType: string, body: Buffer): void {
+function sendGit(res: FastResponse, status: number, contentType: string, body: Buffer): void {
   res.writeHead(status, { 'content-type': contentType, 'content-length': body.length, 'cache-control': 'no-cache' });
   res.end(body);
 }
@@ -465,7 +465,7 @@ export function handleGitHttp(
   method: string,
   body: Buffer,
   gitProtocol: string | null,
-  res: ServerResponse,
+  res: FastResponse,
 ): void {
   const repo = forge.lookup(owner, name);
   if (suffix === 'info/refs') {
