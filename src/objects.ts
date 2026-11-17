@@ -143,6 +143,43 @@ export function peel(oid: string, get: (oid: string) => GObj | undefined): strin
 
 // ---------------------------------------------------------------- pack write
 
+/** Compressed pack entries by object id: an object never changes, so its deflated bytes are reused. */
+const deflateCache = new Map<string, Buffer>();
+
+function packEntry(oid: string, obj: GObj, level: number): Buffer {
+  const cached = deflateCache.get(oid);
+  if (cached !== undefined) return cached;
+  const typeCode = obj.type === 'commit' ? 1 : obj.type === 'tree' ? 2 : obj.type === 'blob' ? 3 : 4;
+  let size = obj.data.length;
+  const bytes: number[] = [];
+  let first = (typeCode << 4) | (size & 0x0f);
+  size >>>= 4;
+  while (size > 0) {
+    bytes.push((first | 0x80) & 0xff);
+    first = size & 0x7f;
+    size >>>= 7;
+  }
+  bytes.push(first);
+  const entry = Buffer.concat([Buffer.from(bytes), deflateSync(obj.data, { level })]);
+  if (deflateCache.size > 200_000) deflateCache.clear();
+  deflateCache.set(oid, entry);
+  return entry;
+}
+
+/** The same pack as writePack, with each object's deflated entry cached by its id. */
+export function writePackOf(entries: readonly { oid: string; obj: GObj }[], level = 1): Buffer {
+  const parts: Buffer[] = [];
+  const header = Buffer.allocUnsafe(12);
+  header.write('PACK', 0, 'ascii');
+  header.writeUInt32BE(2, 4);
+  header.writeUInt32BE(entries.length, 8);
+  parts.push(header);
+  for (const entry of entries) parts.push(packEntry(entry.oid, entry.obj, level));
+  const body = Buffer.concat(parts);
+  const trailer = createHash('sha1').update(body).digest();
+  return Buffer.concat([body, trailer]);
+}
+
 export function writePack(objects: readonly GObj[], level = 1): Buffer {
   const parts: Buffer[] = [];
   const header = Buffer.allocUnsafe(12);

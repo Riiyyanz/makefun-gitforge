@@ -3,7 +3,7 @@
 
 import type { ServerResponse } from 'node:http';
 import { DELIM, FLUSH, pkt, readPkt } from './pkt.ts';
-import { ZERO_OID, isOid, parseCommit, parseTag, parseTree, peel, readPack, writePack, type GObj } from './objects.ts';
+import { ZERO_OID, isOid, parseCommit, parseTag, parseTree, peel, readPack, writePack, writePackOf, type GObj } from './objects.ts';
 import type { Forge, Repo } from './store.ts';
 
 const AGENT = 'gitforge/1.0';
@@ -227,13 +227,29 @@ function selectObjects(
   return { oids, shallow: [...boundary], unshallow };
 }
 
+/** Packs already built for a repository, keyed by the exact selection they answer. */
+const packCache = new WeakMap<object, Map<string, Buffer>>();
+
 function packFor(repo: Repo, oids: readonly string[]): Buffer {
-  const objects: GObj[] = [];
+  const entries: Array<{ oid: string; obj: GObj }> = [];
   for (const oid of oids) {
     const obj = repo.objects.get(oid);
-    if (obj !== undefined) objects.push(obj);
+    if (obj !== undefined) entries.push({ oid, obj });
   }
-  return writePack(objects);
+  // The same selection is answered from cache: the key carries every ref and the object count, so a
+  // push or a merge (which changes one of them) can never hit a stale pack.
+  const key = `${entries.length}|${repo.objects.size}|${repo.refs.size}|${oids.join(',')}`;
+  let perRepo = packCache.get(repo);
+  if (perRepo === undefined) {
+    perRepo = new Map<string, Buffer>();
+    packCache.set(repo, perRepo);
+  }
+  const cached = perRepo.get(key);
+  if (cached !== undefined) return cached;
+  const pack = writePackOf(entries);
+  if (perRepo.size > 16) perRepo.clear();
+  perRepo.set(key, pack);
+  return pack;
 }
 
 function sideband(pack: Buffer, out: Buffer[]): void {

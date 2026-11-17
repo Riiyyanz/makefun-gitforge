@@ -171,6 +171,8 @@ export function createApp(): Server {
   };
 
   return createServer((req, res) => {
+    // Small JSON answers dominate the timed workloads; Nagle would delay each of them.
+    res.socket?.setNoDelay(true);
     handle(req, res).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`[forge] request failed: ${message}\n`);
